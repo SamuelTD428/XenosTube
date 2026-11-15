@@ -10,7 +10,7 @@ SOURCES		:=	source
 INCLUDES	:=	include
 
 CFLAGS		=	-O2 -Wall $(MACHDEP) $(INCLUDE)
-LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
+LDFLAGS		=	$(MACHDEP) -L$(DEVKITXENON)/usr/lib -Wl,-Map,$(notdir $@).map
 LIBS		:=	-lxenon -lfat -lntfs -liso9660 -lm
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
