@@ -11,7 +11,7 @@ INCLUDES	:=	include
 
 CFLAGS		=	-O2 -Wall $(MACHDEP) $(INCLUDE)
 LDFLAGS		=	$(MACHDEP) -L$(DEVKITXENON)/usr/lib -Wl,-Map,$(notdir $@).map
-LIBS		:=	-lxenon -lfat -lntfs -liso9660 -lm
+LIBS		:=	-lxenon -lfat -lm
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
