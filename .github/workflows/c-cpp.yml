@@ -1,0 +1,29 @@
+name: Build XenosTube Client
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: free60/libxenon:latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile XenosTube client
+        run: |
+          cd client
+          make
+
+      - name: Upload XenosTube release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XenosTube-Xbox360
+          path: |
+            client/XenosTube.elf
+            client/XenosTube.elf32
+            client/config.ini
