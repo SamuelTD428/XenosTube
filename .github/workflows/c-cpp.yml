@@ -15,7 +15,7 @@ jobs:
       PATH: /usr/local/xenon/bin:/usr/local/xenon/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Compile XenosTube client
         run: |
@@ -23,7 +23,7 @@ jobs:
           make
 
       - name: Upload XenosTube release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: XenosTube-Xbox360
           path: |
