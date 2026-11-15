@@ -8,8 +8,8 @@
 #include <diskio/ata.h>
 #include <libfat/fat.h>
 #include <network/network.h>
-#include <lwip/sockets.h>
-#include <lwip/netdb.h>
+#include <lwip/tcp.h>
+#include <lwip/ip_addr.h>
 #include <input/input.h>
 #include <time/time.h>
 
@@ -31,6 +31,13 @@ static char server_host[128] = "192.0.2.1";
 static int server_port = 8080;
 static int max_results = 12;
 static char default_query[64] = "xbox";
+
+/* Raw lwIP TCP transfer state */
+static char http_response[8192];
+static int http_total = 0;
+static volatile int http_done = 0;
+static volatile int http_err = 0;
+static char pending_request[512];
 
 void load_config(void) {
     FILE *f = fopen("uda:/config.ini", "r");
@@ -62,26 +69,64 @@ void load_config(void) {
     fclose(f);
 }
 
+static err_t on_tcp_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
+    if (!p) {
+        /* Remote host closed connection -> full response received */
+        tcp_close(tpcb);
+        http_done = 1;
+        return ERR_OK;
+    }
+
+    struct pbuf *q;
+    for (q = p; q != NULL; q = q->next) {
+        int space = (int)sizeof(http_response) - 1 - http_total;
+        if (space > 0) {
+            int to_copy = (q->len < space) ? q->len : space;
+            memcpy(http_response + http_total, q->payload, to_copy);
+            http_total += to_copy;
+        }
+    }
+    http_response[http_total] = '\0';
+
+    tcp_recved(tpcb, p->tot_len);
+    pbuf_free(p);
+    return ERR_OK;
+}
+
+static void on_tcp_err(void *arg, err_t err) {
+    http_err = 1;
+    http_done = 1;
+}
+
+static err_t on_tcp_connected(void *arg, struct tcp_pcb *tpcb, err_t err) {
+    if (err != ERR_OK) {
+        http_err = 1;
+        http_done = 1;
+        return err;
+    }
+    tcp_recv(tpcb, on_tcp_recv);
+    tcp_write(tpcb, pending_request, strlen(pending_request), TCP_WRITE_FLAG_COPY);
+    tcp_output(tpcb);
+    return ERR_OK;
+}
+
 void fetch_videos(const char *query) {
     video_count = 0;
     selected_index = 0;
+    http_total = 0;
+    http_done = 0;
+    http_err = 0;
+    http_response[0] = '\0';
 
-    int sock = lwip_socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) return;
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(server_port);
-    addr.sin_addr.s_addr = inet_addr(server_host);
-
-    if (lwip_connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        lwip_close(sock);
+    ip_addr_t dest_ip;
+    if (!ipaddr_aton(server_host, &dest_ip)) {
         return;
     }
 
-    char req[512];
-    snprintf(req, sizeof(req),
+    struct tcp_pcb *pcb = tcp_new();
+    if (!pcb) return;
+
+    snprintf(pending_request, sizeof(pending_request),
              "GET /api/list?q=%s&limit=%d HTTP/1.1\r\n"
              "Host: %s:%d\r\n"
              "User-Agent: XenosTube-Xbox360/%s (%s)\r\n"
@@ -89,18 +134,27 @@ void fetch_videos(const char *query) {
              query, max_results, server_host, server_port,
              XENOSTUBE_VERSION, XENOSTUBE_CODENAME);
 
-    lwip_send(sock, req, strlen(req), 0);
-
-    static char response[8192];
-    int total = 0, len;
-    while (total < (int)sizeof(response) - 1 &&
-           (len = lwip_recv(sock, response + total, sizeof(response) - 1 - total, 0)) > 0) {
-        total += len;
+    tcp_err(pcb, on_tcp_err);
+    if (tcp_connect(pcb, &dest_ip, server_port, on_tcp_connected) != ERR_OK) {
+        tcp_abort(pcb);
+        return;
     }
-    response[total] = '\0';
-    lwip_close(sock);
 
-    char *body = strstr(response, "\r\n\r\n");
+    /* Poll network stack until transfer completes or ~5s timeout */
+    int ticks = 0;
+    while (!http_done && ticks < 500) {
+        network_poll();
+        mdelay(10);
+        ticks++;
+    }
+
+    if (!http_done) {
+        tcp_abort(pcb);
+        return;
+    }
+    if (http_err || http_total == 0) return;
+
+    char *body = strstr(http_response, "\r\n\r\n");
     if (!body) return;
     body += 4;
 
